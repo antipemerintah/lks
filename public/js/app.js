@@ -2,16 +2,6 @@
 
 const KECEPATAN_KETIK = 16;
 
-const BALASAN_DEMO = [
-    'Menarik! Coba kita lihat dari sudut pandang lain.',
-    'Kalau secara logika, ini bisa dijelaskan begini...',
-    'Ada 2 kemungkinan utama yang bisa kita pertimbangkan.',
-    'Good question! Ini klasik trade-off yang sering muncul.',
-    'Nah, ini yang sering orang skip. Mari kita bahas lebih detail.',
-    'Oke, gue cek dulu ya. Tunggu sebentar.',
-    'Noted! Saya proses sekarang.',
-];
-
 const kondisi = {
     sedangMemuat:   false,
     sesiBaruDibuka: true,
@@ -31,7 +21,7 @@ const el = {
     input:            document.getElementById('input-pesan'),
     tombolKirim:      document.getElementById('tombol-kirim'),
     judulTopbar:      document.querySelector('.judul-topbar'),
-    areaChat: document.querySelector('.area-chat'),
+    areaChat:         document.querySelector('.area-chat'),
 };
 
 // ── Tampilan pesan ──────────────────────────────────────────────────────
@@ -42,19 +32,24 @@ function tampilkanPesan(pesan, animasi = false) {
     gelembung.className = dariUser ? 'pesan-user' : 'pesan-ai';
 
     if (!animasi) {
-        gelembung.textContent = pesan.content;
+        if (!dariUser && pesan.isHTML) {
+            gelembung.innerHTML = pesan.content;
+        } else {
+            gelembung.textContent = pesan.content;
+        }
     }
-    
+
     el.bubbleChat.appendChild(gelembung);
     gulirKeBawah();
 
     if (kondisi.idChatAktif) {
         if (!kondisi.riwayatPesan[kondisi.idChatAktif]) {
             kondisi.riwayatPesan[kondisi.idChatAktif] = [];
-        };
+        }
         kondisi.riwayatPesan[kondisi.idChatAktif].push(pesan);
-    };
-    if (animasi) efekMesinKetik(gelembung, pesan.content);
+    }
+
+    if (animasi) efekMesinKetik(gelembung, pesan.content, pesan.isHTML);
     return gelembung;
 }
 
@@ -72,7 +67,13 @@ function tampilkanIndikatorMenulis() {
     return { hapus: () => gelembung.remove() };
 }
 
-async function efekMesinKetik(elTarget, teks) {
+async function efekMesinKetik(elTarget, teks, isHTML = false) {
+    if (isHTML) {
+        elTarget.innerHTML = '';
+        elTarget.innerHTML = teks;
+        gulirKeBawah();
+        return;
+    }
     elTarget.textContent = '';
     for (let i = 0; i < teks.length; i++) {
         elTarget.textContent += teks[i];
@@ -115,13 +116,12 @@ function tambahChatKeSidebar(id, judul) {
     item.textContent = judulPendek;
     item.title = judul;
 
-    // FIX: klik chat lama dari sidebar → set kondisi yang bener
     item.addEventListener('click', () => {
-        if (kondisi.sedangMemuat) return; // block kalau lagi loading
+        if (kondisi.sedangMemuat) return;
 
         setActiveChat(id);
         kondisi.idChatAktif = id;
-        kondisi.sesiBaruDibuka = false; // ← ini yang missing sebelumnya
+        kondisi.sesiBaruDibuka = false;
 
         el.bubbleChat.innerHTML = '';
         el.sambutan.classList.add('hidden');
@@ -131,19 +131,73 @@ function tambahChatKeSidebar(id, judul) {
         pesan.forEach(p => {
             const gelembung = document.createElement('div');
             gelembung.className = p.role === 'user' ? 'pesan-user' : 'pesan-ai';
-            gelembung.textContent = p.content;
+            if (p.isHTML) {
+                gelembung.innerHTML = p.content;
+            } else {
+                gelembung.textContent = p.content;
+            }
             el.bubbleChat.appendChild(gelembung);
         });
         gulirKeBawah();
     });
 
-    setActiveChat(null); // clear semua active dulu
+    setActiveChat(null);
     el.riwayatChat.insertBefore(item, el.riwayatChat.firstChild);
-    item.classList.add('active'); // set yang baru active
+    item.classList.add('active');
 }
 
 function adaChatDiSidebar() {
     return el.riwayatChat.querySelectorAll('.chat-item').length > 0;
+}
+
+// ── API ──────────────────────────────────────────────────────────────────
+
+async function tanyaAPI(pertanyaan) {
+    const response = await fetch('/api/ask', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+        },
+        body: JSON.stringify({ question: pertanyaan })
+    });
+
+    const data = await response.json();
+
+    if (!data.success) {
+        return { teks: '❌ ' + data.error, isHTML: false };
+    }
+
+    if (!data.data || data.data.length === 0) {
+        return { teks: 'Tidak ada data ditemukan.', isHTML: false };
+    }
+
+    const kolom = Object.keys(data.data[0]);
+
+    let html = `<div style="overflow-x:auto;width:100%">`;
+    html += `<table style="border-collapse:collapse;width:100%;font-size:13px">`;
+
+    // Header
+    html += `<thead><tr>`;
+    kolom.forEach(k => {
+        html += `<th style="border:1px solid #ddd;padding:8px 12px;background:#f0f0f0;text-align:left;white-space:nowrap">${k}</th>`;
+    });
+    html += `</tr></thead>`;
+
+    // Rows
+    html += `<tbody>`;
+    data.data.forEach((row, i) => {
+        const bg = i % 2 === 0 ? '#fff' : '#fafafa';
+        html += `<tr style="background:${bg}">`;
+        kolom.forEach(k => {
+            html += `<td style="border:1px solid #ddd;padding:8px 12px">${row[k] ?? '-'}</td>`;
+        });
+        html += `</tr>`;
+    });
+    html += `</tbody></table></div>`;
+    html += `<div style="margin-top:8px;font-size:11px;color:#aaa">SQL: ${data.sql}</div>`;
+
+    return { teks: html, isHTML: true };
 }
 
 // ── Kirim pesan ──────────────────────────────────────────────────────────
@@ -170,20 +224,15 @@ async function kirimPesan(isi) {
     const menulis = tampilkanIndikatorMenulis();
 
     try {
-        const balasan = await fakeAIResponse();
+        const { teks, isHTML } = await tanyaAPI(isi.trim());
         menulis.hapus();
-        tampilkanPesan({ role: 'assistant', content: balasan }, true);
+        tampilkanPesan({ role: 'assistant', content: teks, isHTML }, !isHTML);
     } catch (err) {
         menulis.hapus();
         tampilkanPesan({ role: 'assistant', content: 'Terjadi kesalahan. Coba lagi.' });
     } finally {
         setMemuat(false);
     }
-}
-
-async function fakeAIResponse() {
-    await jeda(700 + Math.random() * 800);
-    return BALASAN_DEMO[Math.floor(Math.random() * BALASAN_DEMO.length)];
 }
 
 function setMemuat(status) {
@@ -195,7 +244,6 @@ function setMemuat(status) {
 // ── Reset ────────────────────────────────────────────────────────────────
 
 function resetPercakapan() {
-    // FIX: batalkan loading kalau sedang jalan
     kondisi.sedangMemuat = false;
     kondisi.sesiBaruDibuka = true;
     kondisi.idChatAktif = null;
@@ -203,19 +251,16 @@ function resetPercakapan() {
     el.bubbleChat.innerHTML = '';
     el.input.value = '';
 
-    // FIX: reset state input yang mungkin ke-disable
     el.input.disabled = false;
     el.tombolKirim.disabled = false;
 
     el.sambutan.classList.remove('hidden');
     el.judulTopbar.textContent = 'Obrolan baru';
 
-    // FIX: label "belum ada chat" hanya muncul kalau memang kosong
     if (!adaChatDiSidebar()) {
         el.labelBelumChat.classList.remove('hidden');
     }
 
-    // Clear active dari semua item
     setActiveChat(null);
 }
 
@@ -241,12 +286,11 @@ document.querySelectorAll('.chip-pertanyaan').forEach(chip => {
 });
 
 document.addEventListener('keydown', e => {
-    // skip kalau lagi di input/textarea, atau pakai modifier key
     if (
         e.target === el.input ||
         e.ctrlKey || e.metaKey || e.altKey ||
         e.key === 'Enter' || e.key === 'Tab' ||
-        e.key.startsWith('F') || // F1-F12
+        e.key.startsWith('F') ||
         e.key === 'Escape'
     ) return;
 
